@@ -27,11 +27,11 @@ public class LIDARsensor : MonoBehaviour
             //Perform the raycast
             if (Physics.Raycast(ray, out hit, maxRange)) {
                 Debug.DrawRay(transform.position, direction * hit.distance, Color.red);
-                Debug.Log($"Ray {i}: Distance {hit.distance}");
+                // Debug.Log($"Ray {i}: Distance {hit.distance}");
             } 
             else {
                 
-                Debug.DrawRay(transform.position, direction * maxRange, Color.green);
+                Debug.DrawRay(transform.position, direction * maxRange, Color.green); 
             }
         }
     }

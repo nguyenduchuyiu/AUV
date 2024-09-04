@@ -2,7 +2,7 @@
 using System.Collections;
 
 /// <summary>
-/// Magnetometer sensor class
+/// Magnetometer sensor class 
 /// </summary>
 public class Magnetometer : MonoBehaviour {
 
