@@ -41,6 +41,10 @@ public class DroneAgent : Agent {
     /// </summary>
     /// <param name="amount">sum of the results of <c>verse(Rotor r)</c>, applied over every rotor</param>
     void applyTorque(float amount) { transform.Rotate(transform.up, amount * Time.deltaTime); }
+    // void applyTorque(float amount) { 
+    //     droneRigidBody.AddTorque(transform.up * amount); 
+    // }
+
 
     /// <summary>
     /// Calculates the amount of torque that a single rotor is generating over the entire system.
@@ -94,26 +98,10 @@ public class DroneAgent : Agent {
 
     // Point used to calculate the local Z position of the drone
     public Transform target;
-    // Point used to calculate the local X position of the drone
-    private Vector3 routePosition;
-    /// <summary>
-    /// Sets the routePosition, used by the spatial-stabilization algorithm to move
-    /// </summary>
-    /// <param name="v">Position in the route</param>
-    public void setRoutePos(Vector3 v) { routePosition = v; }
 
     // Point that the drone has to look at. Determine the orientation
     private Vector3 lookingAtPoint;
-    /// <summary>
-    /// Sets the lookingPoint, used by the Yaw-stabilization algorithm
-    /// </summary>
-    /// <param name="v">Point the drone has to look at</param>
-    public void setLookingPoint(Vector3 v) { lookingAtPoint = v; }
     
-    // Indicates if the drone has to stabilize itself to the routePosition or can keep following the target
-    public bool stayOnFixedPoint = false;    
-    public void followTarget(bool b) { stayOnFixedPoint = b; }
-
     #endregion
 
     #region internal inputs
@@ -129,31 +117,7 @@ public class DroneAgent : Agent {
     /// Sets the constants used in the stabilization algorithms
     /// <para>This function is used ONLY by the optimizations algorithm (Genetic and twiddle)</para>
     /// </summary>
-    public void setConsts(float vVel, float vAcc, float aVel, float aAcc, float yVel, float orVel, float orAcc)
-    {
-        testing = true;
-        constVertVel = vVel;
-        constVertAcc = vAcc;
-        constAxisVel = aVel;
-        constAxisAcc = aAcc;
-        constYawVel = yVel;
-        constHorizVel = orVel;
-        constHorizAcc = orAcc;
-    }
-    /// <summary>
-    /// Sets the PIDs of the drone
-    /// <para>This function is used ONLY by the optimizations algorithm (Genetic and twiddle)</para>
-    /// </summary>
-    public void setKs(PID yPID, PID zPID, PID xPID, PID pitchPID, PID rollPID, PID yawPID)
-    {
-        //testing = true;
-        this.xPID = xPID;
-        this.zPID = zPID;
-        this.yPID = yPID;
-        this.pitchPID = pitchPID;
-        this.rollPID = rollPID;
-        this.yawPID = yawPID;
-    }
+
     #endregion
 
     #region outputs to the rotors
@@ -325,7 +289,6 @@ public class DroneAgent : Agent {
         float distanceToPoint = droneSettings.keepOnAbsRange(targetZ, 30f);
         float acc = this.acc.getLinearAcceleration().z;
         float vel = this.acc.getLocalLinearVelocity().z;
-        float yawVel = this.mag.getYawVel();
 
         //calculates idealVelocity and idealAcceleration, we'll use this to extract an error that will be given to the PID
         float idealVel = distanceToPoint * (testing ? constAxisVel : droneSettings.constAxisIdealVelocity);
@@ -370,25 +333,29 @@ public class DroneAgent : Agent {
 
     #region  agent
     private Rigidbody droneRigidBody;
-    public override void Initialize()
+    void Start()
     {
         droneRigidBody = GetComponent<Rigidbody>();
+
+        yPID = new PID(droneSettings.verticalPID_P, droneSettings.verticalPID_I, droneSettings.verticalPID_D, droneSettings.verticalPID_U);
+        yawPID = new PID(droneSettings.yawPID_P, droneSettings.yawPID_I, droneSettings.yawPID_D, droneSettings.yawPID_U);
+        rollPID = new PID(droneSettings.orizPID_P, droneSettings.orizPID_I, droneSettings.orizPID_D, droneSettings.orizPID_U);
+        pitchPID = new PID(droneSettings.orizPID_P, droneSettings.orizPID_I, droneSettings.orizPID_D, droneSettings.orizPID_U);
+        zPID = new PID(droneSettings.axisPID_P, droneSettings.axisPID_I, droneSettings.axisPID_D, droneSettings.axisPID_U);
+        xPID = new PID(droneSettings.axisPID_P, droneSettings.axisPID_I, droneSettings.axisPID_D, droneSettings.axisPID_U);
     }
 
     public override void OnEpisodeBegin()
     {
+        Debug.Log("New Episode");
         droneRigidBody.velocity = Vector3.zero;
         droneRigidBody.angularVelocity = Vector3.zero;
-        transform.localPosition = Vector3.zero;
+        transform.localPosition = new Vector3(0, 2, 0);
+        transform.localEulerAngles = new Vector3(0, 0, 0);
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        // Get ideal state of the drone
-        idealPitch = droneSettings.keepOnAbsRange(zStabilization(targetZ), 0.40f);
-        idealRoll = droneSettings.keepOnAbsRange(xStabilization(targetX), 0.40f);
-        idealYaw = mag.getYawToCenterOn(lookingAtPoint);
-
         // Add local position information
         sensor.AddObservation(transform.localPosition);
 
@@ -413,8 +380,6 @@ public class DroneAgent : Agent {
         sensor.AddObservation(acc.getLinearAcceleration().x);
         sensor.AddObservation(acc.getLinearAcceleration().y);
         sensor.AddObservation(acc.getLinearAcceleration().z);
-    
-        
     }
 
     public override void OnActionReceived(ActionBuffers actions)
@@ -427,10 +392,10 @@ public class DroneAgent : Agent {
         float thrustAction = continuousActions[3]; // Action for thrust control
 
         // Adjust the rotor power based on the received actions
-        modifyRollRotorsRotation(rollAction);
-        modifyPitchRotorsRotation(pitchAction);
-        modifyPairsRotorsRotation(yawAction);
-        modifyAllRotorsRotation(thrustAction);
+        modifyRollRotorsRotation(rollAction * rollControl);
+        modifyPitchRotorsRotation(pitchAction * pitchControl);
+        modifyPairsRotorsRotation(yawAction * yawControl);
+        modifyAllRotorsRotation(thrustAction * thrustControl);
 
         // Apply the power adjustments
         pV1 = keepOnRange01(pV1);
@@ -452,7 +417,7 @@ public class DroneAgent : Agent {
         rollStabilization(idealRoll);
         yawStabilization(idealYaw);
 
-        // Truncate and applies the power to the rotors
+        // Truncate and apply the power to the rotors
         pV1 = keepOnRange01(pV1);
         pV2 = keepOnRange01(pV2);
         pO1 = keepOnRange01(pO1);
@@ -465,16 +430,17 @@ public class DroneAgent : Agent {
         // Calculate the torque generated by each rotor and applies it to the drone
         applyTorque(torqueGeneratedBy(helixV1) + torqueGeneratedBy(helixV2) + torqueGeneratedBy(helixO1) + torqueGeneratedBy(helixO2));
 
-        // Calculate the errors for each stabilization
+
+        // Calculate the errors for stabilization
         float pitchError = Mathf.Abs(idealPitch - gyro.getPitch());
         float rollError = Mathf.Abs(idealRoll - gyro.getRoll());
         float yawError = Mathf.Abs(idealYaw - mag.getYaw());
         float altitudeError = Mathf.Abs(targetY - bar.getHeight());
 
-        // Reward the agent for minimizing these errors
+        // Reward for minimizing errors
         float reward = 1.0f - (pitchError + rollError + yawError + altitudeError) / 4.0f;
+        SetReward(reward);
 
-        // Additional rewards or penalties
         if (reward > 0.75f)
         {
             AddReward(1.0f * Time.deltaTime); // Reward for being close to the ideal state
@@ -484,24 +450,79 @@ public class DroneAgent : Agent {
             AddReward(-1.0f * Time.deltaTime); // Penalty for being far from the ideal state
         }
 
-        // Penalty for crashing or going too far from the target
-        if (transform.localPosition.y < 0 || transform.localPosition.y > 20 || Vector3.Distance(transform.localPosition, target.position) > 10)
+        // Reward for maintaining height within a specific range from the floor
+        float currentHeight = transform.localPosition.y;
+        float targetHeight = 5.0f; // For example, target height is 5 units above the floor
+        float heightTolerance = 0.5f; // Tolerance range around the target height
+        if (currentHeight > targetHeight - heightTolerance && currentHeight < targetHeight + heightTolerance)
+        {
+            AddReward(0.5f * Time.deltaTime); // Additional reward for maintaining target height
+        }
+
+        // Penalty for going too far from the target area (optional)
+        if (currentHeight > 20 || Vector3.Distance(transform.localPosition, target.position) > 10)
         {
             AddReward(-5.0f);
             EndEpisode();
         }
+
+        // End episode after a certain time limit (optional)
+        if (StepCount >= MaxStep) // MaxStep is defined in Unity Agent properties
+        {
+            Debug.Log("Step Count > Max Step, ending episode.");
+            EndEpisode();
+        }
     }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (collision.gameObject.CompareTag("Floor"))
+        {
+            AddReward(-5.0f); // Apply penalty for touching the floor
+            Debug.Log("Collided with the floor, ending episode.");
+            EndEpisode(); // End the episode
+        }
+    }
+
 
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var continuousActionsOut = actionsOut.ContinuousActions;
 
-        // Example: Mapping keyboard input to actions for manual control
-        continuousActionsOut[0] = Input.GetAxis("Horizontal"); // Roll
-        continuousActionsOut[1] = Input.GetAxis("Vertical");   // Pitch
-        continuousActionsOut[2] = Input.GetKey(KeyCode.Q) ? 1f : Input.GetKey(KeyCode.E) ? -1f : 0f; // Yaw
-        continuousActionsOut[3] = Input.GetKey(KeyCode.Space) ? 1f : 0f; // Thrust
+        // Roll control (A/D keys)
+        if (Input.GetKey(KeyCode.A))
+            continuousActionsOut[0] = 1f;  // Roll left
+        else if (Input.GetKey(KeyCode.D))
+            continuousActionsOut[0] = -1f; // Roll right
+        else
+            continuousActionsOut[0] = 0f;  // No roll input
+
+        // Pitch control (W/S keys)
+        if (Input.GetKey(KeyCode.W))
+            continuousActionsOut[1] = -1f; // Pitch forward
+        else if (Input.GetKey(KeyCode.S))
+            continuousActionsOut[1] = 1f;  // Pitch backward
+        else
+            continuousActionsOut[1] = 0f;  // No pitch input
+
+        // Yaw control (Q/E keys)
+        if (Input.GetKey(KeyCode.Q))
+            continuousActionsOut[2] = -1f; // Yaw left
+        else if (Input.GetKey(KeyCode.E))
+            continuousActionsOut[2] = 1f;  // Yaw right
+        else
+            continuousActionsOut[2] = 0f;  // No yaw input
+
+        // Thrust control (Space/Left Control keys)
+        if (Input.GetKey(KeyCode.Space)) {
+            continuousActionsOut[3] = 1f;  // Increase thrust
+        }
+        else if (Input.GetKey(KeyCode.LeftControl))
+            continuousActionsOut[3] = -1f; // Decrease thrust
+        else
+            continuousActionsOut[3] = 0f;  // No thrust input
     }
+
 
     #endregion
 }

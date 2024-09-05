@@ -1,0 +1,29 @@
+{
+    "AUV": {
+        "checkpoints": [
+            {
+                "steps": 50003,
+                "file_path": "results/AUV-v1/AUV/AUV-50003.onnx",
+                "reward": -4.036488043389669,
+                "creation_time": 1725536682.1876278,
+                "auxillary_file_paths": [
+                    "results/AUV-v1/AUV/AUV-50003.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 50003,
+            "file_path": "results/AUV-v1/AUV.onnx",
+            "reward": -4.036488043389669,
+            "creation_time": 1725536682.1876278,
+            "auxillary_file_paths": [
+                "results/AUV-v1/AUV/AUV-50003.pt"
+            ]
+        }
+    },
+    "metadata": {
+        "stats_format_version": "0.3.0",
+        "mlagents_version": "1.1.0.dev0",
+        "torch_version": "2.4.0+cu121"
+    }
+}
