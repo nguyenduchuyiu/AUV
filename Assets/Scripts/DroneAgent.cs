@@ -333,6 +333,10 @@ public class DroneAgent : Agent {
 
     #region  agent
     private Rigidbody droneRigidBody;
+    public float collisionDurationThreshold = 3.0f;  // Time in seconds for continuous collision
+    private float collisionTimer = 0.0f;             // Tracks how long the drone is colliding
+    private bool isCollidingWithFloor = false;   
+    public float targetHeight = 10.0f; 
     void Start()
     {
         droneRigidBody = GetComponent<Rigidbody>();
@@ -347,23 +351,36 @@ public class DroneAgent : Agent {
 
     public override void OnEpisodeBegin()
     {
-        Debug.Log("New Episode");
+        // Reset timer
+        collisionTimer = 0.0f;
+        isCollidingWithFloor = false;
+        
+        // Reset position and angle
         droneRigidBody.velocity = Vector3.zero;
         droneRigidBody.angularVelocity = Vector3.zero;
-        transform.localPosition = new Vector3(0, 2, 0);
+        transform.localPosition = new Vector3(0, 0.2f, 0);
         transform.localEulerAngles = new Vector3(0, 0, 0);
+
+
+        // Reset force 
+        pV1 = 0;
+        pV2 = 0;
+        pO1 = 0;
+        pO2 = 0;
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
         // Add local position information
-        sensor.AddObservation(transform.localPosition);
+        // sensor.AddObservation(transform.localPosition);
 
         // Add gyro infomations
         sensor.AddObservation(gyro.getPitch());
         sensor.AddObservation(gyro.getRoll());
-        sensor.AddObservation(Math.Abs(idealPitch - gyro.getPitch()));
-        sensor.AddObservation(Math.Abs(idealRoll - gyro.getRoll()));
+        sensor.AddObservation(gyro.getPitchAcc());
+        sensor.AddObservation(gyro.getRollAcc());
+        sensor.AddObservation(gyro.getPitchVel());
+        sensor.AddObservation(gyro.getRollVel());
 
 
         // Add barometer infomations
@@ -374,12 +391,16 @@ public class DroneAgent : Agent {
         // Add magnetometer infomations
         sensor.AddObservation(mag.getYaw());
         sensor.AddObservation(mag.getYawVel());
-        sensor.AddObservation(Math.Abs(idealYaw - mag.getYaw()));
 
         // Add accelerometer infomations
         sensor.AddObservation(acc.getLinearAcceleration().x);
         sensor.AddObservation(acc.getLinearAcceleration().y);
         sensor.AddObservation(acc.getLinearAcceleration().z);
+
+        // Add gyroscope infomations
+        sensor.AddObservation(acc.getLocalLinearVelocity().x);
+        sensor.AddObservation(acc.getLocalLinearVelocity().y);
+        sensor.AddObservation(acc.getLocalLinearVelocity().z);
     }
 
     public override void OnActionReceived(ActionBuffers actions)
@@ -431,59 +452,75 @@ public class DroneAgent : Agent {
         applyTorque(torqueGeneratedBy(helixV1) + torqueGeneratedBy(helixV2) + torqueGeneratedBy(helixO1) + torqueGeneratedBy(helixO2));
 
 
-        // Calculate the errors for stabilization
-        float pitchError = Mathf.Abs(idealPitch - gyro.getPitch());
-        float rollError = Mathf.Abs(idealRoll - gyro.getRoll());
-        float yawError = Mathf.Abs(idealYaw - mag.getYaw());
-        float altitudeError = Mathf.Abs(targetY - bar.getHeight());
+        // Define maximum allowed tilt (normalized)
+        float maxTiltAngle = 0.05f;
+        // Get the current pitch and roll from the gyroscope
+        float currentPitch = gyro.getPitch(); // Assuming this returns the pitch angle in degrees
+        float currentRoll = gyro.getRoll();   // Assuming this returns the roll angle in degrees
+        // Calculate the stabilization penalty
+        float pitchPenalty = Mathf.Abs(currentPitch) > maxTiltAngle ? Mathf.Abs(currentPitch) - maxTiltAngle : 0;
+        float rollPenalty = Mathf.Abs(currentRoll) > maxTiltAngle ? Mathf.Abs(currentRoll) - maxTiltAngle : 0;
+        // Apply the penalty to the agent's reward
+        float stabilizationPenalty = -(pitchPenalty + rollPenalty);
+        // AddReward(stabilizationPenalty);
 
-        // Reward for minimizing errors
-        float reward = 1.0f - (pitchError + rollError + yawError + altitudeError) / 4.0f;
-        SetReward(reward);
-
-        if (reward > 0.75f)
-        {
-            AddReward(1.0f * Time.deltaTime); // Reward for being close to the ideal state
-        }
-        else if (reward < 0.25f)
-        {
-            AddReward(-1.0f * Time.deltaTime); // Penalty for being far from the ideal state
-        }
 
         // Reward for maintaining height within a specific range from the floor
         float currentHeight = transform.localPosition.y;
-        float targetHeight = 5.0f; // For example, target height is 5 units above the floor
-        float heightTolerance = 0.5f; // Tolerance range around the target height
-        if (currentHeight > targetHeight - heightTolerance && currentHeight < targetHeight + heightTolerance)
+
+        if (currentHeight >= targetHeight)
         {
-            AddReward(0.5f * Time.deltaTime); // Additional reward for maintaining target height
+            AddReward(0.1f); 
+        }
+        else
+        {
+            // Reward based on proximity to the target height
+            float heightDifference = Mathf.Max(0f, targetHeight - currentHeight);
+            float exponent = 2.0f; // Sharpness of the decay
+            float heightReward = Mathf.Exp(-exponent * (heightDifference / targetHeight));
+            AddReward(heightReward);
         }
 
-        // Penalty for going too far from the target area (optional)
-        if (currentHeight > 20 || Vector3.Distance(transform.localPosition, target.position) > 10)
+        // Penalty for going too far from the target area
+        if (currentHeight > 50 || currentHeight < 0)
         {
-            AddReward(-5.0f);
             EndEpisode();
         }
 
-        // End episode after a certain time limit (optional)
-        if (StepCount >= MaxStep) // MaxStep is defined in Unity Agent properties
+        // Check the continuous collision condition
+        if (isCollidingWithFloor)
         {
-            Debug.Log("Step Count > Max Step, ending episode.");
-            EndEpisode();
+            collisionTimer += Time.deltaTime;
+
+            if (collisionTimer >= collisionDurationThreshold)
+            {
+                AddReward(-20f); // Ensure this penalty is significant
+                EndEpisode();     
+            }
+        }
+        else
+        {
+            // Reset the timer if no collision
+            collisionTimer = 0.0f;
         }
     }
 
-    private void OnCollisionEnter(Collision collision)
+    private void OnCollisionStay(Collision collision)
     {
         if (collision.gameObject.CompareTag("Floor"))
         {
-            AddReward(-5.0f); // Apply penalty for touching the floor
-            Debug.Log("Collided with the floor, ending episode.");
-            EndEpisode(); // End the episode
+            isCollidingWithFloor = true;
+            AddReward(-0.1f);
         }
     }
-
+    private void OnCollisionExit(Collision collision)
+    {
+        if (collision.gameObject.CompareTag("Floor"))
+        {
+            isCollidingWithFloor = false;
+            collisionTimer = 0.0f;  // Reset the timer when the drone leaves the floor
+        }
+    }
 
     public override void Heuristic(in ActionBuffers actionsOut)
     {

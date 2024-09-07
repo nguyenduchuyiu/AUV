@@ -60,3 +60,5 @@ MemoryCaptures/
 
 # Ignore burst package cache
 [Ll]ibrary/PackageCache/com.unity.burst@*/.Runtime/
+
+results/
